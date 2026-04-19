@@ -4,90 +4,88 @@ import { useErrorHandler } from "react-error-boundary";
 import { EmptyLocationModel, LocationModel } from "../models";
 
 export const useLocation = (locationName: string, useMockData: boolean) => {
-  const apiKey = process.env.REACT_APP_GEOLOCATION_API_KEY;
-  const geocodeBaseUrl = process.env.REACT_APP_GEOLOCATION_GEOCODE_BASEURL;
+  const [location, setLocation] =
+    useState<LocationModel>(EmptyLocationModel);
 
-  const [location, setLocation] = useState<LocationModel>(EmptyLocationModel);
   const handleError = useErrorHandler();
 
-  const getLocationDetails = useCallback(
-    (position: GeolocationPosition) => {
-      axios
-        .get(
-          useMockData
-            ? "./mock-data/locality.json"
-            : `${geocodeBaseUrl}?latlng=${position.coords.latitude},${position.coords.longitude}&result_type=locality&key=${apiKey}`
-        )
-        .then((res: any) => {
-          if (res.data && res.data.results[0]) {
-            const formattedAddress =
-              res.data.results[0].formatted_address.split(",");
-            setLocation({
-              position: {
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude,
-              },
-              locality: formattedAddress[0].replace(/\s/g, ""),
-              country: formattedAddress[1].replace(/\s/g, ""),
-            });
-          }
-        })
-        .catch((error) => {
-          handleError(error);
-        });
-    },
-    [apiKey, geocodeBaseUrl, handleError, useMockData]
-  );
+  const setCoords = (lat: number, lon: number, locality = "Tokyo", country = "JP") => {
+    setLocation({
+      position: {
+        latitude: lat,
+        longitude: lon,
+      },
+      locality,
+      country,
+    });
+  };
+
+  const getCoordsByIP = async () => {
+    try {
+      const res = await axios.get("https://ipapi.co/json/");
+      setCoords(
+        res.data.latitude,
+        res.data.longitude,
+        res.data.city,
+        res.data.country_code
+      );
+    } catch {
+      console.warn("IP location failed → loading Tokyo fallback");
+      setCoords(35.6762, 139.6503, "Tokyo", "JP");
+    }
+  };
 
   const getCoordsByLocationName = useCallback(
-    (locationName: string) => {
-      axios
-        .get(
-          useMockData
-            ? "./mock-data/latlong.json"
-            : `${geocodeBaseUrl}?address=${locationName}&key=${apiKey}`
-        )
-        .then((res: any) => {
-          if (res.data && res.data.results[0]) {
-            const location = res.data.results[0].geometry.location;
-            const formattedAddress =
-              res.data.results[0].formatted_address.split(",");
-            setLocation({
-              position: {
-                latitude: location.lat,
-                longitude: location.lng,
-              },
-              locality: formattedAddress[0].replace(/\s/g, ""),
-              country: formattedAddress[1].replace(/\s/g, ""),
-            });
-          }
-        })
-        .catch((error) => {
-          handleError(error);
-        });
+    async (locationName: string) => {
+      try {
+        const res = await axios.get(
+          `https://nominatim.openstreetmap.org/search?q=${locationName}&format=json&limit=1`
+        );
+
+        if (res.data && res.data[0]) {
+          setCoords(
+            parseFloat(res.data[0].lat),
+            parseFloat(res.data[0].lon),
+            locationName,
+            ""
+          );
+        } else {
+          getCoordsByIP();
+        }
+      } catch (error) {
+        handleError(error);
+      }
     },
-    [apiKey, geocodeBaseUrl, handleError, useMockData]
+    [handleError]
   );
+
+  const getCoordsByGPS = useCallback(() => {
+    if (!navigator.geolocation) {
+      getCoordsByIP();
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos: GeolocationPosition) => {
+        setCoords(
+          pos.coords.latitude,
+          pos.coords.longitude
+        );
+      },
+      () => {
+        console.warn("GPS blocked → using IP fallback");
+        getCoordsByIP();
+      }
+    );
+  }, []);
 
   useEffect(() => {
     if (locationName === "") {
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (pos: GeolocationPosition) => {
-            getLocationDetails(pos);
-          },
-          () => {
-            handleError({
-              message:
-                "Location - Please enable access location in the browser",
-            });
-          }
-        );
-      }
+      getCoordsByGPS();
     } else {
       getCoordsByLocationName(locationName);
     }
-  }, [getCoordsByLocationName, getLocationDetails, handleError, locationName]);
+  }, [locationName, getCoordsByGPS, getCoordsByLocationName]);
 
   return {
     location,
