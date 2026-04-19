@@ -25,35 +25,39 @@ export const useWeather = (
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [currentWeather, setCurrentWeather] =
     useState<CurrentWeatherModel>(EmptyCurrentWeather);
-  const [hourlyWeather, setHourlyWeather] = useState<HourlyWeatherModel>(
-    EmptyHourlyWeatherModel
-  );
-  const [dailyWeather, setDailyWeather] = useState<DailyWeatherModel>(
-    EmptyDailyWeatherModel
-  );
+  const [hourlyWeather, setHourlyWeather] =
+    useState<HourlyWeatherModel>(EmptyHourlyWeatherModel);
+  const [dailyWeather, setDailyWeather] =
+    useState<DailyWeatherModel>(EmptyDailyWeatherModel);
+
   const handleError = useErrorHandler();
 
   useEffect(() => {
-    setIsLoading(true);
-    if (location) {
-      const url = useMockData
-        ? `./mock-data/weather_${unit}.json`
-        : `${baseUrl}?lat=${location.position.latitude}&lon=${location.position.longitude}&units=${unit}&exclude=minutely,alerts&appid=${apiKey}`;
-      axios
-        .get(url)
-        .then((response) => {
-          setCurrent(response.data.current);
-          setHourly(response.data.hourly);
-          setDaily(response.data.daily);
-        })
-        .catch((error) => {
-          handleError(error);
-        })
-        .finally(() => {
-          setTimeout(() => setIsLoading(false), 100);
-        });
+    if (!location?.position?.latitude || !location?.position?.longitude) {
+      return;
     }
-  }, [location, unit, useMockData, baseUrl, apiKey, handleError]);
+
+    setIsLoading(true);
+
+    const lat = location.position.latitude;
+    const lon = location.position.longitude;
+
+    const currentUrl = `${baseUrl}/weather?lat=${lat}&lon=${lon}&units=${unit}&appid=${apiKey}`;
+    const forecastUrl = `${baseUrl}/forecast?lat=${lat}&lon=${lon}&units=${unit}&appid=${apiKey}`;
+
+    Promise.all([axios.get(currentUrl), axios.get(forecastUrl)])
+      .then(([currentRes, forecastRes]) => {
+        setCurrent(currentRes.data);
+        setHourly(forecastRes.data.list);
+        setDaily(forecastRes.data.list);
+      })
+      .catch((error) => {
+        handleError(error);
+      })
+      .finally(() => {
+        setTimeout(() => setIsLoading(false), 100);
+      });
+  }, [location, unit, baseUrl, apiKey, handleError]);
 
   const setCurrent = (data: any) => {
     setCurrentWeather({
@@ -62,63 +66,75 @@ export const useWeather = (
         icon: data.weather[0].icon,
         description: data.weather[0].description,
       },
-      temp: data.temp,
-      feels_like: data.feels_like,
+      temp: data.main.temp,
+      feels_like: data.main.feels_like,
       details: {
         rain: 0,
         visibility: data.visibility / 1000,
-        humidity: data.humidity,
-        pressure: data.pressure,
-        wind_speed: data.wind_speed,
+        humidity: data.main.humidity,
+        pressure: data.main.pressure,
+        wind_speed: data.wind.speed,
       },
     });
   };
 
-  const setHourly = (data: any) => {
-    let hourly: CurrentWeatherModel[] = [];
-    data.slice(0, 24).forEach((item: any) => {
-      hourly.push({
-        dt: item.dt,
-        weather: {
-          icon: item.weather[0].icon,
-          description: item.weather[0].description,
-        },
-        temp: item.temp,
-        feels_like: item.feels_like,
-        details: {
-          rain: item.pop * 100,
-          visibility: item.visibility / 1000,
-          humidity: item.humidity,
-          pressure: item.pressure,
-          wind_speed: item.wind_speed,
-        },
-      });
-    });
-    setHourlyWeather({ hourly: hourly });
+  const setHourly = (data: any[]) => {
+    const hourly = data.slice(0, 8).map((item) => ({
+      dt: item.dt,
+      weather: {
+        icon: item.weather[0].icon,
+        description: item.weather[0].description,
+      },
+      temp: item.main.temp,
+      feels_like: item.main.feels_like,
+      details: {
+        rain: item.pop * 100,
+        visibility: item.visibility / 1000,
+        humidity: item.main.humidity,
+        pressure: item.main.pressure,
+        wind_speed: item.wind.speed,
+      },
+    }));
+
+    setHourlyWeather({ hourly });
   };
 
-  const setDaily = (data: any) => {
-    let daily: DailyWeatherDetailsModel[] = [];
-    data.slice(1).forEach((item: any) => {
-      daily.push({
-        dt: item.dt,
-        clouds: item.clouds,
-        humidity: item.humidity,
-        pressure: item.pressure,
-        sunrise: item.sunrise,
-        sunset: item.sunset,
-        minTemp: item.temp.min,
-        maxTemp: item.temp.max,
-        uvi: item.uvi,
-        weather: {
-          icon: item.weather[0].icon,
-          description: item.weather[0].description,
-        },
-        wind_speed: item.wind_speed,
-        rain: item.pop * 100,
-      });
+  const setDaily = (data: any[]) => {
+    const daily: DailyWeatherDetailsModel[] = [];
+
+    const grouped: Record<string, any> = {};
+
+    data.forEach((item) => {
+      const date = item.dt_txt.split(" ")[0];
+      if (!grouped[date]) grouped[date] = [];
+      grouped[date].push(item);
     });
-    setDailyWeather({ daily: daily });
+
+    Object.keys(grouped)
+      .slice(1, 6)
+      .forEach((date) => {
+        const day = grouped[date][0];
+
+        daily.push({
+          dt: day.dt,
+          clouds: day.clouds.all,
+          humidity: day.main.humidity,
+          pressure: day.main.pressure,
+          sunrise: 0,
+          sunset: 0,
+          minTemp: day.main.temp_min,
+          maxTemp: day.main.temp_max,
+          uvi: 0,
+          weather: {
+            icon: day.weather[0].icon,
+            description: day.weather[0].description,
+          },
+          wind_speed: day.wind.speed,
+          rain: day.pop * 100,
+        });
+      });
+
+    setDailyWeather({ daily });
   };
 
   return {
