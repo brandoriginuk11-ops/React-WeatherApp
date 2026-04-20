@@ -3,13 +3,13 @@ import { useCallback, useEffect, useState } from "react";
 import { EmptyLocationModel, LocationModel } from "../models";
 
 export const useLocation = (locationName: string, useMockData: boolean) => {
-  const apiKey = process.env.REACT_APP_GEOLOCATION_API_KEY;
-  const geocodeBaseUrl = process.env.REACT_APP_GEOLOCATION_GEOCODE_BASEURL;
+
+  const weatherApiKey = process.env.REACT_APP_OPENWEATHER_API_KEY;
 
   const [location, setLocation] =
     useState<LocationModel>(EmptyLocationModel);
 
-  // Save coords locally
+  // Save coordinates locally
   const saveCoords = (lat: number, lon: number) => {
     localStorage.setItem(
       "weather_coords",
@@ -17,7 +17,7 @@ export const useLocation = (locationName: string, useMockData: boolean) => {
     );
   };
 
-  // Set location helper
+  // Update location state
   const setCoords = (
     latitude: number,
     longitude: number,
@@ -36,134 +36,193 @@ export const useLocation = (locationName: string, useMockData: boolean) => {
     saveCoords(latitude, longitude);
   };
 
-  // Reverse geocode GPS → city name
-  const getLocationDetails = useCallback(
+  // Reverse geocode coords → city name
+  const reverseGeocode = useCallback(
     (lat: number, lon: number) => {
+
       axios
         .get(
-          useMockData
-            ? "./mock-data/locality.json"
-            : `${geocodeBaseUrl}?latlng=${lat},${lon}&result_type=locality&key=${apiKey}`
+          `https://api.openweathermap.org/geo/1.0/reverse?lat=${lat}&lon=${lon}&limit=1&appid=${weatherApiKey}`
         )
         .then((res: any) => {
-          if (res.data?.results?.length > 0) {
-            const address =
-              res.data.results[0].formatted_address.split(",");
+
+          if (res.data?.length > 0) {
+
+            const data = res.data[0];
 
             setCoords(
               lat,
               lon,
-              address[0].trim(),
-              address[1]?.trim() || ""
+              data.name,
+              data.country
             );
+
+          } else {
+
+            fallbackTokyo();
+
           }
+
         })
         .catch(() => {
-          getCoordsByIP();
+
+          fallbackTokyo();
+
         });
+
     },
-    [apiKey, geocodeBaseUrl, useMockData]
+    [weatherApiKey]
   );
 
-  // City search support
+  // Search city name → coords
   const getCoordsByLocationName = useCallback(
     (locationName: string) => {
+
       axios
         .get(
-          useMockData
-            ? "./mock-data/latlong.json"
-            : `${geocodeBaseUrl}?address=${locationName}&key=${apiKey}`
+          `https://api.openweathermap.org/geo/1.0/direct?q=${locationName}&limit=1&appid=${weatherApiKey}`
         )
         .then((res: any) => {
-          if (res.data?.results?.length > 0) {
-            const location =
-              res.data.results[0].geometry.location;
 
-            const address =
-              res.data.results[0].formatted_address.split(",");
+          if (res.data?.length > 0) {
+
+            const data = res.data[0];
 
             setCoords(
-              location.lat,
-              location.lng,
-              address[0].trim(),
-              address[1]?.trim() || ""
+              data.lat,
+              data.lon,
+              data.name,
+              data.country
             );
+
           }
+
         })
-        .catch(getCoordsByIP);
+        .catch(() => {
+
+          fallbackTokyo();
+
+        });
+
     },
-    [apiKey, geocodeBaseUrl, useMockData]
+    [weatherApiKey]
   );
 
   // IP fallback
   const getCoordsByIP = () => {
+
     axios
       .get("https://ipapi.co/json/")
       .then((res) => {
+
         if (res.data?.latitude) {
-          setCoords(
+
+          reverseGeocode(
             res.data.latitude,
-            res.data.longitude,
-            res.data.city,
-            res.data.country_name
+            res.data.longitude
           );
+
         } else {
+
           fallbackTokyo();
+
         }
+
       })
       .catch(fallbackTokyo);
+
   };
 
-  // Last fallback
+  // Final fallback
   const fallbackTokyo = () => {
-    setCoords(35.6762, 139.6503, "Tokyo", "JP");
+
+    setCoords(
+      35.6762,
+      139.6503,
+      "Tokyo",
+      "JP"
+    );
+
   };
 
   // GPS detection
   const getCoordsByGPS = useCallback(() => {
+
     if (!navigator.geolocation) {
+
       getCoordsByIP();
       return;
+
     }
 
     navigator.geolocation.getCurrentPosition(
+
       (pos) => {
-        getLocationDetails(
+
+        reverseGeocode(
           pos.coords.latitude,
           pos.coords.longitude
         );
+
       },
+
       () => {
+
         getCoordsByIP();
+
       },
+
       {
         enableHighAccuracy: true,
         timeout: 15000,
         maximumAge: 0,
       }
+
     );
-  }, [getLocationDetails]);
+
+  }, [reverseGeocode]);
 
   useEffect(() => {
+
     if (locationName !== "") {
+
       getCoordsByLocationName(locationName);
       return;
+
     }
 
-    // Load saved coords first
+    // Load cached coords first
     const cached = localStorage.getItem("weather_coords");
 
     if (cached) {
+
       const coords = JSON.parse(cached);
 
       if (coords?.lat && coords?.lon) {
-        getLocationDetails(coords.lat, coords.lon);
+
+        reverseGeocode(
+          coords.lat,
+          coords.lon
+        );
+
         return;
+
       }
+
     }
 
+    // Otherwise detect automatically
     getCoordsByGPS();
-  }, [locationName, getCoordsByGPS, getCoordsByLocationName, getLocationDetails]);
 
-  return { location };
+  }, [
+    locationName,
+    getCoordsByGPS,
+    getCoordsByLocationName,
+    reverseGeocode
+  ]);
+
+  return {
+    location,
+  };
+
 };
